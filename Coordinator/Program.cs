@@ -1,4 +1,7 @@
 using Coordinator.Models.Contexts;
+using Coordinator.Services;
+using Coordinator.Services.Abstractions;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
 namespace Coordinator
@@ -10,7 +13,6 @@ namespace Coordinator
             var builder = WebApplication.CreateBuilder(args);
 
 
-            builder.Services.AddControllers();
             builder.Services.AddEndpointsApiExplorer();
             builder.Services.AddSwaggerGen();
 
@@ -34,10 +36,12 @@ namespace Coordinator
 
             builder.Services.AddHttpClient("PaymentAPI", config =>
             {
-               config.BaseAddress = new Uri("https://localhost:7143/");
+                config.BaseAddress = new Uri("https://localhost:7143/");
 
             });
 
+
+            builder.Services.AddTransient<ITransactionService, TransactionService>();
 
 
 
@@ -49,12 +53,33 @@ namespace Coordinator
                 app.UseSwaggerUI();
             }
 
-            app.UseHttpsRedirection();
 
-            app.UseAuthorization();
+            app.MapGet("/create-order-transaction", async ([FromServices] ITransactionService transactionService) =>
+            {
+                //phase1
+                var transactionId = await transactionService.CreateTransactionAsync();
+
+                await transactionService.PrepareServicesAsync(transactionId);
+
+                bool transactionState = await transactionService.CheckTransactionStateServiceAsync(transactionId);
+
+                if (transactionState)
+                {
+                    await transactionService.CommitAsync(transactionId);
+                    transactionState = await transactionService.CheckTransactionStateServiceAsync(transactionId);
+
+                }
+
+                if (!transactionState)
+                    await transactionService.RollbackAsync(transactionId);
+
+            });
 
 
-            app.MapControllers();
+
+
+
+
 
             app.Run();
         }

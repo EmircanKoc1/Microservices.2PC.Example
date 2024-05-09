@@ -23,6 +23,7 @@ namespace Coordinator.Services
             _orderHttpClient = _httpClientFactory.CreateClient("OrderAPI");
             _stockHttpClient = _httpClientFactory.CreateClient("StockAPI");
             _paymentHttpClient = _httpClientFactory.CreateClient("PaymentAPI");
+
         }
 
         public async Task<Guid> CreateTransactionAsync()
@@ -80,20 +81,16 @@ namespace Coordinator.Services
             });
 
         }
-
         public async Task<bool> CheckReadyServicesAsync(Guid transactionId)
-        {
-            return (await _context.NodeStates
+        => (await _context.NodeStates
                 .Where(ns => ns.TransactionId.Equals(transactionId))
                 .ToListAsync()).TrueForAll(ns => ns.IsReady.Equals(ReadyType.Ready));
 
-        }
 
-        public Task<bool> CheckTransactionStateServiceAsync(Guid transactionId)
-        {
-            throw new NotImplementedException();
-        }
-
+        public async Task<bool> CheckTransactionStateServiceAsync(Guid transactionId)
+        => (await _context.NodeStates
+            .Where(ns => ns.TransactionId.Equals(transactionId))
+            .ToListAsync()).TrueForAll(ns => ns.TransactionState.Equals(TransactionState.Done));
         public async Task CommitAsync(Guid transactionId)
         {
             var transactionNodes = await _context.NodeStates
@@ -126,16 +123,46 @@ namespace Coordinator.Services
                     transactionNode.TransactionState = TransactionState.Abort;
                 }
 
+                await _context.SaveChangesAsync();
 
             }
 
         }
 
-
-
-        public Task RollbackAsync(Guid transactionId)
+        public async Task RollbackAsync(Guid transactionId)
         {
-            throw new NotImplementedException();
+            var transactionNodes = await _context.NodeStates
+                                            .Where(ns => ns.TransactionId.Equals(transactionId))
+                                            .Include(ns => ns.Node)
+                                            .ToListAsync();
+
+            foreach (var transactionNode in transactionNodes)
+            {
+
+                try
+                {
+                    if (transactionNode.TransactionState.Equals(TransactionState.Done))
+                        _ = await (transactionNode.Node.Name switch
+                        {
+
+                            "OrderAPI" => _orderHttpClient.GetAsync("rollback"),
+                            "PaymentAPI" => _paymentHttpClient.GetAsync("rollback"),
+                            "StockAPI" => _stockHttpClient.GetAsync("rollback"),
+                        });
+
+                    transactionNode.TransactionState = TransactionState.Abort;
+
+                }
+                catch (Exception)
+                {
+
+                    transactionNode.TransactionState = TransactionState.Abort;
+                }
+
+                await _context.SaveChangesAsync();
+
+            }
+
         }
     }
 }
